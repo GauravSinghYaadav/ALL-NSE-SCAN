@@ -7,7 +7,6 @@ from tvDatafeed import TvDatafeed, Interval
 # ==============================
 USERNAME = "EGAVSIV"
 PASSWORD = "Eric$1234"
-tv = TvDatafeed(USERNAME, PASSWORD)
 
 # ==============================
 # Timeframes → Folder Mapping
@@ -22,18 +21,10 @@ BARS = 4000
 RETRY_DELAY = 3
 MAX_RETRY = 5
 
-# ==============================
-# Symbols (sample)
-# ==============================
 symbols = [
    '20MICRONS','21STCENMGM','360ONE','3BBLACKBIO','3IINFOLTD','3MINDIA','3PLAND','5PAISA'
-
 ]
 
-# last update on 1 july 2026
-# ==============================
-# Logs (repo root)
-# ==============================
 LOG_FILE = "download_log.txt"
 ERROR_FILE = "error_symbols.txt"
 
@@ -51,7 +42,14 @@ def log_error(symbol, tf, err):
 # ==============================
 def fetch_save(args):
     symbol, tf_label, interval, folder = args
-    os.makedirs(folder, exist_ok=True)
+    
+    # Secure absolute path handling for safety in GitHub environments
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    target_folder = os.path.join(base_dir, folder)
+    os.makedirs(target_folder, exist_ok=True)
+    
+    # Initialize connection locally inside the process context
+    tv = TvDatafeed(USERNAME, PASSWORD)
     attempt = 1
 
     while attempt <= MAX_RETRY:
@@ -64,7 +62,7 @@ def fetch_save(args):
             )
 
             if df is not None and not df.empty:
-                df.to_parquet(os.path.join(folder, f"{symbol}.parquet"))
+                df.to_parquet(os.path.join(target_folder, f"{symbol}.parquet"))
                 log(f"[OK] {symbol} | TF:{tf_label}")
                 return
 
@@ -98,7 +96,3 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-
-
-
-
