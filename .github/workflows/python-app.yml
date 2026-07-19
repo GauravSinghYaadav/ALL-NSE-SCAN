@@ -54,11 +54,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add stock_data/
+          # Only proceed if the folder exists and is not empty
+          if [ -d "stock_data" ] && [ "$(ls -A stock_data 2>/dev/null)" ]; then
+            git add stock_data/
 
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
+            if git diff --cached --quiet; then
+              echo "No changes to commit."
+            else
+              git commit -m "Auto Update Stock Data"
+              git push
+            fi
           else
-            git commit -m "Auto Update Stock Data"
-            git push
+            echo "Warning: stock_data/ folder does not exist or contains no files. Skipping commit."
           fi
