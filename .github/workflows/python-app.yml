@@ -4,17 +4,19 @@ on:
   workflow_dispatch:
 
   schedule:
-    # Monday-Friday at 5:30 PM IST (12:00 UTC)
     - cron: "0 12 * * 1-5"
 
 permissions:
   contents: write
 
 jobs:
+
   fetch-stock-data:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -24,33 +26,53 @@ jobs:
           python-version: "3.11"
 
       - name: Upgrade pip
-        run: |
-          python -m pip install --upgrade pip
+        run: python -m pip install --upgrade pip
 
-      - name: Install Dependencies
+      - name: Install Packages
         run: |
-          pip install pandas pyarrow fastparquet websocket-client requests openpyxl XlsxWriter
+          pip install pandas
+          pip install pyarrow
+          pip install fastparquet
+          pip install websocket-client
+          pip install requests
+          pip install openpyxl
+          pip install XlsxWriter
           pip install git+https://github.com/rongardF/tvdatafeed.git
 
-      - name: Verify Installation
+      - name: Verify tvDatafeed
         run: |
-          python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed Installed Successfully')"
+          python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed OK')"
 
-      - name: Run Fetch Script
+      - name: Run Script
+        env:
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
         run: |
           python Fetchdata.py
 
-      - name: Commit Updated Files
+      - name: Show Files
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "Current Folder:"
+          pwd
 
-          # Stage all data directories and tracking text logs
-          git add stock_data_D/ stock_data_W/ stock_data_M/ download_log.txt error_symbols.txt || true
+          echo ""
+          echo "Directory Tree:"
+          ls -R
+
+      - name: Commit Files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add stock_data_D || true
+          git add stock_data_W || true
+          git add stock_data_M || true
+          git add download_log.txt || true
+          git add error_symbols.txt || true
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "Nothing changed."
           else
-            git commit -m "Auto Update Stock Data [$(date -u +'%Y-%m-%d %H:%M:%S') UTC]"
+            git commit -m "Auto Update Stock Data"
             git push
           fi
