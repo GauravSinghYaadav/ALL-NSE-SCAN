@@ -3,6 +3,7 @@ import time
 import socket
 import ssl
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor  # Added for multi-threading
 from tvDatafeed import TvDatafeed, Interval
 
 # ==============================
@@ -23,6 +24,7 @@ TIMEFRAMES = {
 BARS = 4000
 RETRY_DELAY = 3
 MAX_RETRY = 5
+MAX_WORKERS = 4  # Defined 4 parallel workers
 
 # ==============================
 # Symbols
@@ -203,15 +205,11 @@ def log_error(symbol, tf, err):
 
 
 def fetch_save(symbol, tf_label, interval, folder):
-
     os.makedirs(folder, exist_ok=True)
-
     tv = TvDatafeed(USERNAME, PASSWORD)
 
     for attempt in range(1, MAX_RETRY + 1):
-
         try:
-
             df = tv.get_hist(
                 symbol=symbol,
                 exchange="NSE",
@@ -220,43 +218,41 @@ def fetch_save(symbol, tf_label, interval, folder):
             )
 
             if df is not None and not df.empty:
-
                 filename = os.path.join(folder, f"{symbol}.parquet")
-
                 df.to_parquet(filename)
-
                 print(f"Saved -> {filename}")
-
                 log(f"[OK] {symbol} {tf_label}")
-
                 return
-
             else:
-
                 log(f"[EMPTY] {symbol} {tf_label} Attempt {attempt}")
-
         except (socket.timeout, ssl.SSLError):
-
             log(f"[TIMEOUT] {symbol} {tf_label}")
-
         except Exception as e:
-
             log(f"[ERROR] {symbol} {tf_label} {e}")
-
+        
         time.sleep(RETRY_DELAY)
 
     log_error(symbol, tf_label, "Failed")
 
 
-def run_all():
+def worker_task(task_args):
+    """Helper unpacking function for the thread executor"""
+    symbol, tf_label, interval, folder = task_args
+    fetch_save(symbol, tf_label, interval, folder)
 
+
+def run_all():
     log("===== DOWNLOAD STARTED =====")
 
+    # 1. Generate a flat list of all individual download tasks
+    tasks = []
     for tf_label, (interval, folder) in TIMEFRAMES.items():
-
         for symbol in symbols:
+            tasks.append((symbol, tf_label, interval, folder))
 
-            fetch_save(symbol, tf_label, interval, folder)
+    # 2. Process tasks in parallel using 4 worker threads
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        executor.map(worker_task, tasks)
 
     log("===== DOWNLOAD FINISHED =====")
 
