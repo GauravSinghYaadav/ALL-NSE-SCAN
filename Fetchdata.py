@@ -1,98 +1,116 @@
-import os, time, socket, ssl, multiprocessing as mp
+import os
+import time
+import socket
+import ssl
 from datetime import datetime
 from tvDatafeed import TvDatafeed, Interval
 
 # ==============================
 # TradingView Credentials
 # ==============================
-USERNAME = "EGAVSIV"
-PASSWORD = "Eric$1234"
+USERNAME = os.getenv("TV_USERNAME", "EGAVSIV")
+PASSWORD = os.getenv("TV_PASSWORD", "Eric$1234")
 
 # ==============================
-# Timeframes → Folder Mapping
+# Timeframes
 # ==============================
 TIMEFRAMES = {
-    "D":  (Interval.in_daily,   "stock_data_D"),
-    "W":  (Interval.in_weekly,  "stock_data_W"),
-    "M":  (Interval.in_monthly, "stock_data_M"),
+    "D": (Interval.in_daily, "stock_data_D"),
+    "W": (Interval.in_weekly, "stock_data_W"),
+    "M": (Interval.in_monthly, "stock_data_M"),
 }
 
 BARS = 4000
 RETRY_DELAY = 3
 MAX_RETRY = 5
 
+# ==============================
+# Symbols
+# ==============================
 symbols = [
-   '20MICRONS','21STCENMGM','360ONE','3BBLACKBIO','3IINFOLTD','3MINDIA','3PLAND','5PAISA'
+    "20MICRONS",
+    "21STCENMGM",
+    "360ONE",
+    "3BBLACKBIO",
+    "3IINFOLTD",
+    "3MINDIA",
+    "3PLAND",
+    "5PAISA"
 ]
 
 LOG_FILE = "download_log.txt"
 ERROR_FILE = "error_symbols.txt"
 
+
 def log(msg):
+    print(msg)
     with open(LOG_FILE, "a") as f:
         f.write(f"{datetime.now()} | {msg}\n")
-    print(msg)
+
 
 def log_error(symbol, tf, err):
     with open(ERROR_FILE, "a") as f:
         f.write(f"{symbol},{tf},{err}\n")
 
-# ==============================
-# Fetch + Save
-# ==============================
-def fetch_save(args):
-    symbol, tf_label, interval, folder = args
-    
-    # Secure absolute path handling for safety in GitHub environments
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    target_folder = os.path.join(base_dir, folder)
-    os.makedirs(target_folder, exist_ok=True)
-    
-    # Initialize connection locally inside the process context
-    tv = TvDatafeed(USERNAME, PASSWORD)
-    attempt = 1
 
-    while attempt <= MAX_RETRY:
+def fetch_save(symbol, tf_label, interval, folder):
+
+    os.makedirs(folder, exist_ok=True)
+
+    tv = TvDatafeed(USERNAME, PASSWORD)
+
+    for attempt in range(1, MAX_RETRY + 1):
+
         try:
+
             df = tv.get_hist(
                 symbol=symbol,
                 exchange="NSE",
                 interval=interval,
-                n_bars=BARS
+                n_bars=BARS,
             )
 
             if df is not None and not df.empty:
-                df.to_parquet(os.path.join(target_folder, f"{symbol}.parquet"))
-                log(f"[OK] {symbol} | TF:{tf_label}")
+
+                filename = os.path.join(folder, f"{symbol}.parquet")
+
+                df.to_parquet(filename)
+
+                print(f"Saved -> {filename}")
+
+                log(f"[OK] {symbol} {tf_label}")
+
                 return
 
-            log(f"[EMPTY] {symbol} | TF:{tf_label} retry={attempt}")
+            else:
+
+                log(f"[EMPTY] {symbol} {tf_label} Attempt {attempt}")
+
+        except (socket.timeout, ssl.SSLError):
+
+            log(f"[TIMEOUT] {symbol} {tf_label}")
 
         except Exception as e:
-            msg = "Network error" if isinstance(e, (socket.timeout, ssl.SSLError)) else str(e)
-            log(f"[ERROR] {symbol} | TF:{tf_label} | {msg}")
 
-        attempt += 1
+            log(f"[ERROR] {symbol} {tf_label} {e}")
+
         time.sleep(RETRY_DELAY)
 
-    log_error(symbol, tf_label, "Failed after retries")
+    log_error(symbol, tf_label, "Failed")
 
-# ==============================
-# Runner
-# ==============================
+
 def run_all():
+
     log("===== DOWNLOAD STARTED =====")
 
-    tasks = []
     for tf_label, (interval, folder) in TIMEFRAMES.items():
-        for sym in symbols:
-            tasks.append((sym, tf_label, interval, folder))
 
-    workers = min(4, mp.cpu_count())
-    with mp.Pool(workers) as pool:
-        pool.map(fetch_save, tasks)
+        for symbol in symbols:
+
+            fetch_save(symbol, tf_label, interval, folder)
 
     log("===== DOWNLOAD FINISHED =====")
+
 
 if __name__ == "__main__":
     run_all()
