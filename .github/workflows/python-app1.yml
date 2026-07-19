@@ -1,0 +1,61 @@
+name: NSE Daily Automated Stock Scanner
+
+on:
+  # 1. Scheduled Run: Daily at 5:00 PM IST (which is 11:30 AM UTC)
+  schedule:
+    - cron: '30 11 * * *'
+
+  # 2. Manual Run: Provides a "Run workflow" button in the GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out your repository code
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python Environment
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Speeds up future runs by caching dependencies
+
+      # Step 3: Install TA-Lib (Required C-library dependency)
+      - name: Install TA-Lib dependencies
+        run: |
+          sudo apt-get update
+          wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib/
+          ./configure --prefix=/usr
+          make
+          sudo make install
+          cd ..
+          rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
+      # Step 4: Install Python Dependencies
+      - name: Install Python Packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas openpyxl TA-Lib pyarrow fastparquet
+
+      # Step 5: Run your scanner script
+      - name: Run NSE Scanner Script
+        run: |
+          python scanner.py
+
+      # Step 6: Commit and Save the Generated Excel files back to GitHub (Optional Backup)
+      - name: Commit and push generated Excel reports
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Output/
+          # Only commit if there are actually changes to avoid workflow errors
+          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-generated Scanner Reports - $(date +'%d %b %Y')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
