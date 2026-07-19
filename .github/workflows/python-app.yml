@@ -4,19 +4,17 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "0 12 * * 1-5"
+    # Monday to Friday at 4:00 PM IST (10:30 UTC)
+    - cron: "30 10 * * 1-5"
 
 permissions:
   contents: write
 
 jobs:
-
   fetch-stock-data:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -26,9 +24,10 @@ jobs:
           python-version: "3.11"
 
       - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+        run: |
+          python -m pip install --upgrade pip
 
-      - name: Install Packages
+      - name: Install Dependencies
         run: |
           pip install pandas
           pip install pyarrow
@@ -39,40 +38,58 @@ jobs:
           pip install XlsxWriter
           pip install git+https://github.com/rongardF/tvdatafeed.git
 
-      - name: Verify tvDatafeed
+      - name: Verify tvDatafeed Installation
         run: |
-          python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed OK')"
+          python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed Installed Successfully')"
 
-      - name: Run Script
+      - name: Run Fetch Script
         env:
           TV_USERNAME: ${{ secrets.TV_USERNAME }}
           TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
         run: |
           python Fetchdata.py
 
-      - name: Show Files
+      - name: Show Generated Files
         run: |
-          echo "Current Folder:"
+          echo "========== Current Directory =========="
           pwd
 
           echo ""
-          echo "Directory Tree:"
+          echo "========== Repository Files =========="
           ls -R
 
-      - name: Commit Files
+          echo ""
+          echo "========== Daily Files =========="
+          ls -lh stock_data_D || true
+
+          echo ""
+          echo "========== Weekly Files =========="
+          ls -lh stock_data_W || true
+
+          echo ""
+          echo "========== Monthly Files =========="
+          ls -lh stock_data_M || true
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add stock_data_D || true
-          git add stock_data_W || true
-          git add stock_data_M || true
+          git add stock_data_D/ || true
+          git add stock_data_W/ || true
+          git add stock_data_M/ || true
           git add download_log.txt || true
           git add error_symbols.txt || true
 
           if git diff --cached --quiet; then
-            echo "Nothing changed."
+            echo "No changes detected."
           else
-            git commit -m "Auto Update Stock Data"
+            git commit -m "Auto Update Stock Data - $(date -u '+%Y-%m-%d %H:%M UTC')"
             git push
           fi
+
+      - name: Workflow Complete
+        run: |
+          echo "===================================="
+          echo "Stock Data Update Completed"
+          echo "===================================="
