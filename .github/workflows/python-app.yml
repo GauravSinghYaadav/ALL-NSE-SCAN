@@ -29,13 +29,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pandas
-          pip install pyarrow
-          pip install fastparquet
-          pip install websocket-client
-          pip install requests
-          pip install openpyxl
-          pip install XlsxWriter
+          pip install pandas pyarrow fastparquet websocket-client requests openpyxl XlsxWriter
           pip install git+https://github.com/rongardF/tvdatafeed.git
 
       - name: Verify Installation
@@ -43,9 +37,6 @@ jobs:
           python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed Installed Successfully')"
 
       - name: Run Fetch Script
-        env:
-          TV_USERNAME: ${{ secrets.TV_USERNAME }}
-          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
         run: |
           python Fetchdata.py
 
@@ -54,16 +45,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Only proceed if the folder exists and is not empty
-          if [ -d "stock_data" ] && [ "$(ls -A stock_data 2>/dev/null)" ]; then
-            git add stock_data/
+          # Stage all data directories and tracking text logs
+          git add stock_data_D/ stock_data_W/ stock_data_M/ download_log.txt error_symbols.txt || true
 
-            if git diff --cached --quiet; then
-              echo "No changes to commit."
-            else
-              git commit -m "Auto Update Stock Data"
-              git push
-            fi
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
           else
-            echo "Warning: stock_data/ folder does not exist or contains no files. Skipping commit."
+            git commit -m "Auto Update Stock Data [$(date -u +'%Y-%m-%d %H:%M:%S') UTC]"
+            git push
           fi
