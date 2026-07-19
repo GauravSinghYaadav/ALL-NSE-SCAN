@@ -1,0 +1,171 @@
+name: Daily Stock Data Fetch + Scanner
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # Monday-Friday at 4:00 PM IST (10:30 UTC)
+    - cron: "30 10 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-and-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    ####################################################
+    # Checkout Repository
+    ####################################################
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    ####################################################
+    # Python
+    ####################################################
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: "pip"
+
+    ####################################################
+    # Upgrade pip
+    ####################################################
+    - name: Upgrade pip
+      run: |
+        python -m pip install --upgrade pip
+
+    ####################################################
+    # Install FetchData Dependencies
+    ####################################################
+    - name: Install FetchData Dependencies
+      run: |
+        pip install pandas
+        pip install numpy
+        pip install requests
+        pip install websocket-client
+        pip install openpyxl
+        pip install pyarrow
+        pip install fastparquet
+        pip install XlsxWriter
+        pip install git+https://github.com/rongardF/tvdatafeed.git
+
+    ####################################################
+    # Verify tvDatafeed
+    ####################################################
+    - name: Verify tvDatafeed
+      run: |
+        python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed Installed Successfully')"
+
+    ####################################################
+    # Run Fetch Script
+    ####################################################
+    - name: Run Fetchdata.py
+      env:
+        TV_USERNAME: ${{ secrets.TV_USERNAME }}
+        TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+      run: |
+        python Fetchdata.py
+
+    ####################################################
+    # Display Generated Files
+    ####################################################
+    - name: Display Downloaded Files
+      run: |
+        echo "Daily Folder"
+        ls -lh stock_data_D || true
+
+        echo "Weekly Folder"
+        ls -lh stock_data_W || true
+
+        echo "Monthly Folder"
+        ls -lh stock_data_M || true
+
+    ####################################################
+    # Commit Downloaded Data
+    ####################################################
+    - name: Commit Stock Data
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git add stock_data_D/ || true
+        git add stock_data_W/ || true
+        git add stock_data_M/ || true
+        git add download_log.txt || true
+        git add error_symbols.txt || true
+
+        if git diff --cached --quiet; then
+          echo "No Stock Data Changes"
+        else
+          git commit -m "Auto Update Stock Data - $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
+        fi
+
+    ####################################################
+    # Install TA-Lib
+    ####################################################
+    - name: Install TA-Lib
+      run: |
+        sudo apt-get update
+
+        wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+
+        tar -xzf ta-lib-0.4.0-src.tar.gz
+
+        cd ta-lib
+
+        ./configure --prefix=/usr
+
+        make
+
+        sudo make install
+
+        cd ..
+
+        rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
+    ####################################################
+    # Install Scanner Dependencies
+    ####################################################
+    - name: Install Scanner Packages
+      run: |
+        pip install TA-Lib
+
+    ####################################################
+    # Run Scanner
+    ####################################################
+    - name: Run scanner.py
+      run: |
+        python scanner.py
+
+    ####################################################
+    # Commit Scanner Output
+    ####################################################
+    - name: Commit Scanner Reports
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git add Output/ || true
+
+        if git diff --cached --quiet; then
+          echo "No Scanner Changes"
+        else
+          git commit -m "Scanner Report - $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
+        fi
+
+    ####################################################
+    # Finish
+    ####################################################
+    - name: Workflow Completed
+      run: |
+        echo "========================================"
+        echo "FETCH DATA COMPLETED"
+        echo "SCANNER COMPLETED"
+        echo "WORKFLOW SUCCESSFUL"
+        echo "========================================"
