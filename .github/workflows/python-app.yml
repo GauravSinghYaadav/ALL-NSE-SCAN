@@ -1,0 +1,64 @@
+name: Fetch Stock Data
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # Monday-Friday at 5:30 PM IST (12:00 UTC)
+    - cron: "0 12 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-stock-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install Dependencies
+        run: |
+          pip install pandas
+          pip install pyarrow
+          pip install fastparquet
+          pip install websocket-client
+          pip install requests
+          pip install openpyxl
+          pip install XlsxWriter
+          pip install git+https://github.com/rongardF/tvdatafeed.git
+
+      - name: Verify Installation
+        run: |
+          python -c "from tvDatafeed import TvDatafeed, Interval; print('tvDatafeed Installed Successfully')"
+
+      - name: Run Fetch Script
+        env:
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: |
+          python Fetchdata.py
+
+      - name: Commit Updated Files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add stock_data/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Auto Update Stock Data"
+            git push
+          fi
