@@ -512,7 +512,7 @@ def send_email_with_attachments(file_paths, date_str):
         return False
 
     msg = EmailMessage()
-    msg["Subject"] = f"NSE Scanner Report - {date_str}"
+    msg["Subject"] = f"NSE_All_Stock Scanner Report - {date_str}"
     msg["From"] = SENDER_EMAIL
     msg["To"] = ", ".join(RECIPIENTS)
     msg.set_content(
