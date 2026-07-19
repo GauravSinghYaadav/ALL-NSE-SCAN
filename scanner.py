@@ -32,8 +32,7 @@ SMTP_PORT = 587
 SENDER_EMAIL = "nse.scanner.app@gmail.com"
 SENDER_PASSWORD = "wmkdozoyfprduqgx"
 RECIPIENTS = ["yadav.gauravsingh@gmail.com"]
-# Move hidden recipients to a separate BCC list
-BCC_RECIPIENTS = ["dipti.gorwadia@gmail.com,yadav.gauravsingh34@gmail.com,akshay.tiwari@gmail.com"]
+BCC_RECIPIENTS = ["dipti.gorwadia@gmail.com", "yadav.gauravsingh34@gmail.com", "akshay.tiwari@gmail.com"]
 
 TELEGRAM_BOT_TOKEN = "8344354642:AAG_S7mavtiLP_yXPh4YM4u31QD5BBWJmuM"
 TELEGRAM_CHAT_IDS = ["5332984891", "-1002622207173"]
@@ -343,7 +342,6 @@ def run_macd_nd_filtered(df):
         }
     return None
 
-# Dictionary linking Worksheet Name to Scanner Execution Method
 SCANNERS = {
     "RSI Market Pulse": lambda df: {
         "Signal": "Monitor",
@@ -403,12 +401,9 @@ SCANNERS = {
     }
 }
 
-# Helper method to map single-value primary scanner outputs for the Summary Grid Layout Matrix
 def extract_grid_cell_value(scanner_name, res):
     if not res:
         return ""
-    
-    # Custom display logic per column based on your attachment sample layouts
     if scanner_name == "Volume Shocker":
         return "High Vol Expansion" if res.get("Signal") == "BUY" else ""
     elif scanner_name == "NRB-7 breakout":
@@ -427,7 +422,6 @@ def extract_grid_cell_value(scanner_name, res):
         return sig if sig != "Neutral" else ""
     elif scanner_name == "RSI Market Pulse":
         return res.get("Zone") or ""
-    
     return str(res.get("Signal", ""))
 
 # ==============================================================================
@@ -445,10 +439,7 @@ def process_timeframe(folder_name, output_name, date_str):
         return None, [], pd.DataFrame()
 
     logger.info(f"Scanning {len(files)} symbols in {folder_name}...")
-    
     sheets_data = {scanner_name: [] for scanner_name in SCANNERS.keys()}
-    
-    # Container for building the requested single comprehensive spreadsheet mapping matrix grid
     grid_rows = []
 
     for f in files:
@@ -458,14 +449,11 @@ def process_timeframe(folder_name, output_name, date_str):
             if df.empty or len(df) < 50:
                 continue
 
-            # Base grid structure for this stock
             grid_stock_row = {"Symbol": sym}
 
             for scanner_name, scanner_fn in SCANNERS.items():
                 try:
                     res = scanner_fn(df)
-                    
-                    # Store cell mapping value for the single summary matrix sheet view
                     grid_stock_row[scanner_name] = extract_grid_cell_value(scanner_name, res)
                     
                     if res:
@@ -487,7 +475,6 @@ def process_timeframe(folder_name, output_name, date_str):
         except Exception as e:
             logger.error(f"Error loading file {f}: {e}")
 
-    # Create detailed separate workbook for individual scanners inside this timeframe
     excel_filename = f"{output_name}_{date_str}.xlsx"
     excel_filepath = os.path.join(OUTPUT_DIR, excel_filename)
     
@@ -499,35 +486,213 @@ def process_timeframe(folder_name, output_name, date_str):
             df_out.to_excel(writer, sheet_name=scanner_name[:30], index=False)
 
     logger.info(f"Successfully generated: {excel_filepath}")
-    
-    # Formulate the compiled dataframe representation for the timeline grid
     df_grid_tf = pd.DataFrame(grid_rows) if grid_rows else pd.DataFrame(columns=["Symbol"] + list(SCANNERS.keys()))
-    
     return excel_filepath, sheets_data.get("MACD Normal Divergence", []), df_grid_tf
 
 # ==============================================================================
-# 5. COMMUNICATIONS (EMAIL & TELEGRAM MODULES)
+# 5. EXCLUSIVE HTML DASHBOARD BLOCK BUILDER
 # ==============================================================================
-def send_email_with_attachments(file_paths, date_str):
+def build_html_dashboard(grid_dfs, date_str):
+    """
+    Parses the scan matrices dynamically to generate an executive email body.
+    Calculates dynamic counts for RSI zones, MACD ranges, and identifies top picks.
+    """
+    total_stocks_tracked = 0
+    top_picks_list = []
+    
+    # Structure metrics storage timeframe-wise
+    tf_summary_html = ""
+    
+    for tf, df in grid_dfs.items():
+        if df.empty:
+            continue
+            
+        total_stocks_tracked = max(total_stocks_tracked, len(df))
+        
+        # Calculate dynamic data metrics
+        rsi_bullish = len(df[df["RSI Market Pulse"] == "RSI > 60"])
+        rsi_bearish = len(df[df["RSI Market Pulse"] == "RSI < 40"])
+        rsi_neutral = len(df[df["RSI Market Pulse"] == "RSI 40–60"])
+        total_rsi = max(1, rsi_bullish + rsi_bearish + rsi_neutral)
+        
+        # Percentages for inline CSS mock charts
+        bullish_pct = int((rsi_bullish / total_rsi) * 100)
+        neutral_pct = int((rsi_neutral / total_rsi) * 100)
+        bearish_pct = int((rsi_bearish / total_rsi) * 100)
+        
+        # MACD Ranges Breakdown
+        macd_strong_bull = len(df[df["MACD Market Pulse"] == "Strong Bullish"])
+        macd_weak_bull = len(df[df["MACD Market Pulse"] == "Weak Bullish"])
+        macd_strong_bear = len(df[df["MACD Market Pulse"] == "Strong Bearish"])
+        macd_cooling = len(df[df["MACD Market Pulse"] == "Bullish Cooling"])
+        
+        # Track Top Picks (Confluence + Volume Shockers or Bullish Divergences)
+        for _, row in df.iterrows():
+            conditions = [
+                "Bullish Confluence" in str(row["Confluence"]),
+                "High Vol Expansion" in str(row["Volume Shocker"]),
+                "Bullish ND" in str(row["MACD Normal Divergence"]),
+                "MACD Hook Up" in str(row["MACD Hook Up"])
+            ]
+            if any(conditions) and len(top_picks_list) < 8:
+                reasons = []
+                if conditions[0]: reasons.append("Confluence")
+                if conditions[1]: reasons.append("Vol Expansion")
+                if conditions[2]: reasons.append("MACD Divergence")
+                if conditions[3]: reasons.append("MACD Hook Up")
+                
+                pick_info = {
+                    "symbol": row["Symbol"],
+                    "tf": tf,
+                    "reason": " + ".join(reasons),
+                    "link": make_tradingview_link(row["Symbol"])
+                }
+                if pick_info not in top_picks_list:
+                    top_picks_list.append(pick_info)
+
+        # Generate structural layout per timeframe
+        tf_summary_html += f"""
+        <div style="background-color: #ffffff; padding: 18px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #eef2f5;">
+            <h3 style="margin-top: 0; color: #1e293b; border-bottom: 2px solid #3b82f6; padding-bottom: 6px; display: inline-block;">🕒 {tf} Timeframe Pulse</h3>
+            
+            <!-- RSI Inline Distribution Row -->
+            <p style="margin: 10px 0 5px 0; font-size: 13px; color: #64748b; font-weight: 600;">RSI MARKET DYNAMICS</p>
+            <div style="width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 16px; display: flex; overflow: hidden; margin-bottom: 12px;">
+                <div style="width: {bullish_pct}%; background-color: #10b981; color: white; font-size: 10px; text-align: center; line-height: 16px; font-weight: bold;">{bullish_pct}%</div>
+                <div style="width: {neutral_pct}%; background-color: #94a3b8; color: white; font-size: 10px; text-align: center; line-height: 16px; font-weight: bold;">{neutral_pct}%</div>
+                <div style="width: {bearish_pct}%; background-color: #ef4444; color: white; font-size: 10px; text-align: center; line-height: 16px; font-weight: bold;">{bearish_pct}%</div>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
+                <tr>
+                    <td>🟢 <span style="color:#10b981; font-weight:bold;">Bullish (>60):</span> {rsi_bullish} stocks</td>
+                    <td>⚪ <span style="color:#64748b; font-weight:bold;">Neutral (40-60):</span> {rsi_neutral} stocks</td>
+                    <td>🔴 <span style="color:#ef4444; font-weight:bold;">Bearish (<40):</span> {rsi_bearish} stocks</td>
+                </tr>
+            </table>
+
+            <!-- MACD Breakdown Grid -->
+            <p style="margin: 0 0 8px 0; font-size: 13px; color: #64748b; font-weight: 600;">MACD RANGE PULSE</p>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; background-color: #f8fafc; border-radius: 6px;">
+                <thead>
+                    <tr style="background-color: #cbd5e1; color: #334155;">
+                        <th style="padding: 6px 10px;">Strong Bullish</th>
+                        <th style="padding: 6px 10px;">Bullish Cooling</th>
+                        <th style="padding: 6px 10px;">Weak Bullish</th>
+                        <th style="padding: 6px 10px;">Strong Bearish</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding: 8px 10px; color: #047857; font-weight: bold;">{macd_strong_bull}</td>
+                        <td style="padding: 8px 10px; color: #b45309;">{macd_cooling}</td>
+                        <td style="padding: 8px 10px; color: #059669;">{macd_weak_bull}</td>
+                        <td style="padding: 8px 10px; color: #b91c1c; font-weight: bold;">{macd_strong_bear}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """
+
+    # Build Top Picks Table rows
+    top_picks_rows = ""
+    if top_picks_list:
+        for pick in top_picks_list:
+            top_picks_rows += f"""
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px; font-weight: bold; color: #1e3a8a;">{pick['symbol']}</td>
+                <td style="padding: 10px;"><span style="background-color: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 11px;">{pick['tf']}</span></td>
+                <td style="padding: 10px; color: #475569; font-size: 12px;">✨ {pick['reason']}</td>
+                <td style="padding: 10px;"><a href="{pick['link']}" style="color: #3b82f6; text-decoration: none; font-weight: bold;" target="_blank">Chart ↗</a></td>
+            </tr>
+            """
+    else:
+        top_picks_rows = """<tr><td colspan="4" style="padding: 15px; text-align: center; color: #94a3b8;">No immediate breakthrough setups detected today. Check full sheets.</td></tr>"""
+
+    # Main Executive Template Wrapper
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>NSE Executive Market Dashboard</title>
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #334155;">
+        <div style="max-width: 700px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+            
+            <!-- Dashboard Banner Header -->
+            <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 25px; color: #ffffff; text-align: center;">
+                <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">📊 NSE Automated Scanner Dashboard</h1>
+                <p style="margin: 6px 0 0 0; opacity: 0.9; font-size: 14px;">Market Analytics Summary &bull; {date_str}</p>
+            </div>
+            
+            <!-- Quick Status Cards -->
+            <div style="padding: 20px; background-color: #f8fafc; display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; gap: 10px;">
+                <div style="background-color: white; padding: 10px 15px; border-radius: 6px; border-left: 4px solid #3b82f6; width: 45%;">
+                    <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">Stocks Monitored</div>
+                    <div style="font-size: 20px; font-weight: bold; color: #1e293b;">{total_stocks_tracked} Symbols</div>
+                </div>
+                <div style="background-color: white; padding: 10px 15px; border-radius: 6px; border-left: 4px solid #10b981; width: 45%;">
+                    <div style="font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;">Pipeline Run Status</div>
+                    <div style="font-size: 20px; font-weight: bold; color: #10b981;">SUCCESS ✅</div>
+                </div>
+            </div>
+
+            <div style="padding: 20px;">
+                <!-- Section: Top High Probability Picks -->
+                <h2 style="font-size: 16px; color: #1e3a8a; text-transform: uppercase; margin-top: 0; margin-bottom: 12px; border-left: 4px solid #1e3a8a; padding-left: 8px;">⭐ Top Picks / Technical Confluences</h2>
+                <table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 25px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+                    <thead>
+                        <tr style="background-color: #f1f5f9; color: #475569; font-size: 13px;">
+                            <th style="padding: 10px;">Stock</th>
+                            <th style="padding: 10px;">Interval</th>
+                            <th style="padding: 10px;">Matching Technical Triggers</th>
+                            <th style="padding: 10px;">TradingView</th>
+                        </tr>
+                    </thead>
+                    <tbody style="font-size: 13px;">
+                        {top_picks_rows}
+                    </tbody>
+                </table>
+
+                <!-- Section: Multi-timeframe summaries -->
+                <h2 style="font-size: 16px; color: #1e3a8a; text-transform: uppercase; margin-bottom: 12px; border-left: 4px solid #1e3a8a; padding-left: 8px;">📈 Market Pulse Heatmaps</h2>
+                {tf_summary_html}
+                
+                <!-- Footer Info -->
+                <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; text-align: center;">
+                    <p>This automated email dashboard tracks key structural indicators across multiple custom target windows.<br/>
+                    Please refer to the attached separate Excel documents for comprehensive scanning row matrices.</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_body
+
+# ==============================================================================
+# 6. COMMUNICATIONS (EMAIL & TELEGRAM MODULES)
+# ==============================================================================
+def send_email_with_dashboard(file_paths, date_str, html_dashboard_content):
     if not SENDER_EMAIL or not SENDER_PASSWORD:
         logger.error("Email credentials missing. Skipping email dispatch.")
         return False
 
     msg = EmailMessage()
-    msg["Subject"] = f"NSE_All_Stock Scanner Report - {date_str}"
+    msg["Subject"] = f"NSE Executive Stock Scanner Report - {date_str}"
     msg["From"] = SENDER_EMAIL
     msg["To"] = ", ".join(RECIPIENTS)
     
-    # Check and assign BCC recipients if the list exists and has entries
     if "BCC_RECIPIENTS" in globals() and BCC_RECIPIENTS:
         msg["Bcc"] = ", ".join(BCC_RECIPIENTS)
 
-    msg.set_content(
-        f"Hi,\n\nPlease find attached the NSE automated multi-timeframe stock reports for {date_str}.\n\n"
-        f"Generated reports include:\n" + "\n".join([f"- {os.path.basename(p)}" for p in file_paths]) +
-        f"\n\nRegards,\nAutomation Script"
-    )
+    # Set the fallback text message
+    msg.set_content(f"Please view this email via an HTML-compatible client to see the automated market dashboard summary for {date_str}.")
+    
+    # Add the interactive dashboard directly into the email body container
+    msg.add_alternative(html_dashboard_content, subtype="html")
 
+    # Handle attachments
     for path in file_paths:
         if not os.path.exists(path):
             continue
@@ -550,7 +715,7 @@ def send_email_with_attachments(file_paths, date_str):
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
-        logger.info("Notification email dispatched successfully.")
+        logger.info("Notification email dashboard dispatched successfully.")
         return True
     except Exception as e:
         logger.error(f"SMTP Email Delivery failed: {e}")
@@ -572,7 +737,7 @@ def send_telegram_notification(date_str, report_count, total_scanners):
         f"✔ Monthly\n"
         f"✔ Comprehensive Summary Matrix Grid\n\n"
         f"📈 *Total Scanners :* {total_scanners}\n\n"
-        f"✉ *Status :* {report_count} Reports mailed successfully."
+        f"✉ *Status :* {report_count} Reports & Dashboard mailed successfully."
     )
 
     for chat_id in TELEGRAM_CHAT_IDS:
@@ -592,7 +757,7 @@ def send_telegram_notification(date_str, report_count, total_scanners):
             logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
 
 # ==============================================================================
-# 6. MAIN CONTROLLER PIPELINE
+# 7. MAIN CONTROLLER PIPELINE
 # ==============================================================================
 def main():
     start_time = datetime.now()
@@ -601,7 +766,7 @@ def main():
 
     generated_files = []
     macd_divergences_by_tf = {}  
-    grid_dataframes_by_tf = {} # Dictionary containing time-frame grid sheets
+    grid_dataframes_by_tf = {} 
 
     for tf_key, (folder_name, output_name) in TIMEFRAME_FOLDERS.items():
         filepath, macd_rows, df_grid_tf = process_timeframe(folder_name, output_name, date_str)
@@ -611,24 +776,21 @@ def main():
             if not df_grid_tf.empty:
                 grid_dataframes_by_tf[tf_key] = df_grid_tf
 
-    # NEW FILE GENERATION: Consolidated comprehensive matrix mapping grid sheet timeframe-wise
+    # Generate full Consolidated mapping matrix grid
     if grid_dataframes_by_tf:
         summary_matrix_filename = f"Scanner Summary Matrix_{date_str}.xlsx"
         summary_matrix_filepath = os.path.join(OUTPUT_DIR, summary_matrix_filename)
         
         with pd.ExcelWriter(summary_matrix_filepath, engine="openpyxl") as writer:
             for tf_key, df_matrix in grid_dataframes_by_tf.items():
-                # Order columns logically: Symbol followed by all scanner outputs
                 cols_order = ["Symbol"] + [c for c in df_matrix.columns if c != "Symbol"]
                 df_matrix = df_matrix[cols_order]
-                
-                # Each timeframe sheet contains all 214 stocks mapped across all scanner signals
                 df_matrix.to_excel(writer, sheet_name=tf_key, index=False)
                 
         logger.info(f"Successfully generated full mapping Summary Matrix: {summary_matrix_filepath}")
         generated_files.append(summary_matrix_filepath)
 
-    # Generate the combined "MACD Normal Divergences" file with sheets for each timeframe
+    # Generate combined MACD Divergences report
     if macd_divergences_by_tf:
         combined_macd_filename = f"MACD Normal Divergences_{date_str}.xlsx"
         combined_macd_filepath = os.path.join(OUTPUT_DIR, combined_macd_filename)
@@ -647,8 +809,11 @@ def main():
         logger.error("No reports were generated. Aborting email and Telegram alerts.")
         return
 
-    # Dispatch Mail with All Attachments (including the combined MACD file & Summary Matrix)
-    mail_success = send_email_with_attachments(generated_files, date_str)
+    # Build the rich visual HTML Dashboard from runtime pipeline dataframes
+    html_dashboard_content = build_html_dashboard(grid_dataframes_by_tf, date_str)
+
+    # Dispatch Mail with Dashboard Body & All Attachments
+    mail_success = send_email_with_dashboard(generated_files, date_str, html_dashboard_content)
     
     # Send Telegram Alerts
     if mail_success:
