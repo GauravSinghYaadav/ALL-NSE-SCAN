@@ -31,7 +31,9 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "nse.scanner.app@gmail.com"
 SENDER_PASSWORD = "wmkdozoyfprduqgx"
-RECIPIENTS = ["yadav.gauravsingh@gmail.com", "dipti.gorwadia@gmail.com"]
+RECIPIENTS = ["yadav.gauravsingh@gmail.com"]
+# Move hidden recipients to a separate BCC list
+BCC_RECIPIENTS = ["dipti.gorwadia@gmail.com,yadav.gauravsingh34@gmail.com"]
 
 TELEGRAM_BOT_TOKEN = "8344354642:AAG_S7mavtiLP_yXPh4YM4u31QD5BBWJmuM"
 TELEGRAM_CHAT_IDS = ["5332984891", "-1002622207173"]
@@ -515,6 +517,11 @@ def send_email_with_attachments(file_paths, date_str):
     msg["Subject"] = f"NSE_All_Stock Scanner Report - {date_str}"
     msg["From"] = SENDER_EMAIL
     msg["To"] = ", ".join(RECIPIENTS)
+    
+    # Check and assign BCC recipients if the list exists and has entries
+    if "BCC_RECIPIENTS" in globals() and BCC_RECIPIENTS:
+        msg["Bcc"] = ", ".join(BCC_RECIPIENTS)
+
     msg.set_content(
         f"Hi,\n\nPlease find attached the NSE automated multi-timeframe stock reports for {date_str}.\n\n"
         f"Generated reports include:\n" + "\n".join([f"- {os.path.basename(p)}" for p in file_paths]) +
