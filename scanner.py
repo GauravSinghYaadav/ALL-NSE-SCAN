@@ -69,44 +69,56 @@ def make_tradingview_link(sym: str) -> str:
 # ==============================================================================
 def detect_macd_divergence(df, lookback=30):
     """
-    Detects 4 types of MACD Divergences:
+    Detects 4 types of MACD Divergences safely handling warm-up bars and NaNs:
     1. Bearish Divergence (ND): Price Higher High, MACD Lower High
     2. Bullish Divergence (ND): Price Lower Low, MACD Higher Low
     3. Reverse Bullish Divergence (RD): Price Higher Low, MACD Lower Low
     4. Reverse Bearish Divergence (RD): Price Lower High, MACD Higher High
     """
-    if len(df) < lookback:
+    if df is None or len(df) < 65:  # Enforce minimum bars for MACD 34-bar warm-up + 30 lookback
         return None
 
-    macd, _, _ = talib.MACD(df["close"], 12, 26, 9)
-    
-    # Segment windows: Window 1 (Older), Window 2 (Recent)
-    p_high1 = df["high"].iloc[-lookback:-15].max()
-    p_high2 = df["high"].iloc[-15:].max()
-    m_high1 = macd.iloc[-lookback:-15].max()
-    m_high2 = macd.iloc[-15:].max()
+    try:
+        close = pd.to_numeric(df["close"], errors="coerce")
+        high = pd.to_numeric(df["high"], errors="coerce")
+        low = pd.to_numeric(df["low"], errors="coerce")
 
-    p_low1 = df["low"].iloc[-lookback:-15].min()
-    p_low2 = df["low"].iloc[-15:].min()
-    m_low1 = macd.iloc[-lookback:-15].min()
-    m_low2 = macd.iloc[-15:].min()
+        macd, _, _ = talib.MACD(close, 12, 26, 9)
 
-    # 1. Bearish Normal Divergence (ND)
-    if p_high2 > p_high1 and m_high2 < m_high1:
-        return "Bearish ND"
+        # Ensure window slice contains valid numeric data
+        if macd.iloc[-lookback:].isna().any():
+            return None
 
-    # 2. Bullish Normal Divergence (ND)
-    if p_low2 < p_low1 and m_low2 > m_low1:
-        return "Bullish ND"
+        # Segment windows: Window 1 (Older 15 bars), Window 2 (Recent 15 bars)
+        p_high1 = high.iloc[-lookback:-15].max()
+        p_high2 = high.iloc[-15:].max()
+        m_high1 = macd.iloc[-lookback:-15].max()
+        m_high2 = macd.iloc[-15:].max()
 
-    # 3. Reverse Bullish Divergence (RD) / Hidden Bullish
-    if p_low2 > p_low1 and m_low2 < m_low1:
-        return "Bullish RD"
+        p_low1 = low.iloc[-lookback:-15].min()
+        p_low2 = low.iloc[-15:].min()
+        m_low1 = macd.iloc[-lookback:-15].min()
+        m_low2 = macd.iloc[-15:].min()
 
-    # 4. Reverse Bearish Divergence (RD) / Hidden Bearish
-    if p_high2 < p_high1 and m_high2 > m_high1:
-        return "Bearish RD"
+        # 1. Bearish Normal Divergence (ND)
+        if p_high2 > p_high1 and m_high2 < m_high1:
+            return "Bearish ND"
 
+        # 2. Bullish Normal Divergence (ND)
+        if p_low2 < p_low1 and m_low2 > m_low1:
+            return "Bullish ND"
+
+        # 3. Reverse Bullish Divergence (RD) / Hidden Bullish
+        if p_low2 > p_low1 and m_low2 < m_low1:
+            return "Bullish RD"
+
+        # 4. Reverse Bearish Divergence (RD) / Hidden Bearish
+        if p_high2 < p_high1 and m_high2 > m_high1:
+            return "Bearish RD"
+
+    except Exception as e:
+        logger.debug(f"Divergence calculation error: {e}")
+        
     return None
 
 def run_rsi_market_pulse(df):
@@ -452,20 +464,15 @@ def extract_grid_cell_value(scanner_name, res):
     return str(res.get("Signal", ""))
 
 # ==============================================================================
-# 4. MULTI-TIMEFRAME ANALYTICS GENERATOR
+# 4. MULTI-TIMEFRAME ANALYTICS & DEDICATED MACD EXCEL GENERATOR
 # ==============================================================================
 def generate_analytics_data(tf_divergences):
-    """
-    Evaluates alignment between Higher Time Frame (HTF) and Lower Time Frame (LTF)
-    across the specified strategic buckets and generates buy/sell recommendations.
-    """
     analytics_rows = []
 
     for htf, ltf in HTF_LTF_MAP:
         htf_data = tf_divergences.get(htf, {})
         ltf_data = tf_divergences.get(ltf, {})
 
-        # Find symbols detected in both HTF and LTF
         common_symbols = set(htf_data.keys()).intersection(set(ltf_data.keys()))
 
         for sym in common_symbols:
@@ -476,25 +483,21 @@ def generate_analytics_data(tf_divergences):
             remark = ""
             recommendation = "NEUTRAL"
 
-            # Bucket 1: HTF Bullish ND & LTF Bullish ND
             if htf_div == "Bullish ND" and ltf_div == "Bullish ND":
                 bucket = "Bullish ND + Bullish ND"
                 remark = f"{sym}: HTF {htf} Bullish ND and LTF {ltf} Bullish ND (Strong Reversal Confluence)"
                 recommendation = "STRONG BUY"
 
-            # Bucket 2: HTF Bullish RD & LTF Bullish ND
             elif htf_div == "Bullish RD" and ltf_div == "Bullish ND":
                 bucket = "Bullish RD + Bullish ND"
                 remark = f"{sym}: HTF {htf} Bullish RD and LTF {ltf} Bullish ND (Trend Continuation with Entry Signal)"
                 recommendation = "BUY"
 
-            # Bucket 3: HTF Bearish ND & LTF Bearish ND
             elif htf_div == "Bearish ND" and ltf_div == "Bearish ND":
                 bucket = "Bearish ND + Bearish ND"
                 remark = f"{sym}: HTF {htf} Bearish ND and LTF {ltf} Bearish ND (Strong Distribution Signal)"
                 recommendation = "STRONG SELL"
 
-            # Bucket 4: HTF Bearish RD & LTF Bearish ND
             elif htf_div == "Bearish RD" and ltf_div == "Bearish ND":
                 bucket = "Bearish RD + Bearish ND"
                 remark = f"{sym}: HTF {htf} Bearish RD and LTF {ltf} Bearish ND (Downtrend Continuation Signal)"
@@ -514,6 +517,35 @@ def generate_analytics_data(tf_divergences):
                 })
 
     return pd.DataFrame(analytics_rows)
+
+def generate_dedicated_macd_excel(tf_divergences, date_str):
+    """
+    Creates a dedicated standalone Excel file specifically for MACD Divergences across all timeframes.
+    """
+    macd_filename = f"MACD_Divergence_Report_{date_str}.xlsx"
+    macd_filepath = os.path.join(OUTPUT_DIR, macd_filename)
+    
+    with pd.ExcelWriter(macd_filepath, engine="openpyxl") as writer:
+        for tf_label, div_dict in tf_divergences.items():
+            rows = []
+            for sym, data in div_dict.items():
+                rows.append({
+                    "Symbol": sym,
+                    "Timeframe": tf_label,
+                    "Divergence Type": data.get("Divergence", ""),
+                    "Signal": data.get("Signal", "Divergence Alert"),
+                    "TV_Link": make_tradingview_link(sym)
+                })
+            
+            df_tf = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Symbol", "Timeframe", "Divergence Type", "Signal", "TV_Link"])
+            if df_tf.empty:
+                df_tf = pd.DataFrame([["No MACD Divergence detected for this timeframe", tf_label, "", "", ""]], 
+                                     columns=["Symbol", "Timeframe", "Divergence Type", "Signal", "TV_Link"])
+            
+            df_tf.to_excel(writer, sheet_name=tf_label, index=False)
+            
+    logger.info(f"Generated Dedicated MACD Divergence File: {macd_filepath}")
+    return macd_filepath
 
 # ==============================================================================
 # 5. BATCH PROCESSING ENGINE
@@ -560,7 +592,7 @@ def process_timeframe(folder_name, output_name, date_str):
                         if any(row[col] not in ["", "Neutral", None] for col in ["Signal", "Setup", "Divergence", "Trend"]):
                             sheets_data[scanner_name].append(row)
                             
-                        if scanner_name == "MACD Normal Divergence" and "Divergence" in res:
+                        if scanner_name == "MACD Normal Divergence" and res.get("Divergence"):
                             divergence_dict[sym] = row
                 except Exception as e:
                     logger.debug(f"Failed to scan {sym} with {scanner_name}: {e}")
@@ -588,10 +620,6 @@ def process_timeframe(folder_name, output_name, date_str):
 # 6. EXCLUSIVE HTML DASHBOARD BLOCK BUILDER
 # ==============================================================================
 def build_html_dashboard(grid_dfs, analytics_df, date_str):
-    """
-    Parses the scan matrices dynamically to generate an executive email body.
-    Includes dynamic counts, HTPL recommendations dashboard, and top pick alerts.
-    """
     total_stocks_tracked = 0
     top_picks_list = []
     tf_summary_html = ""
@@ -602,26 +630,26 @@ def build_html_dashboard(grid_dfs, analytics_df, date_str):
             
         total_stocks_tracked = max(total_stocks_tracked, len(df))
         
-        rsi_bullish = len(df[df["RSI Market Pulse"] == "RSI > 60"])
-        rsi_bearish = len(df[df["RSI Market Pulse"] == "RSI < 40"])
-        rsi_neutral = len(df[df["RSI Market Pulse"] == "RSI 40–60"])
+        rsi_bullish = len(df[df["RSI Market Pulse"] == "RSI > 60"]) if "RSI Market Pulse" in df else 0
+        rsi_bearish = len(df[df["RSI Market Pulse"] == "RSI < 40"]) if "RSI Market Pulse" in df else 0
+        rsi_neutral = len(df[df["RSI Market Pulse"] == "RSI 40–60"]) if "RSI Market Pulse" in df else 0
         total_rsi = max(1, rsi_bullish + rsi_bearish + rsi_neutral)
         
         bullish_pct = int((rsi_bullish / total_rsi) * 100)
         neutral_pct = int((rsi_neutral / total_rsi) * 100)
         bearish_pct = int((rsi_bearish / total_rsi) * 100)
         
-        macd_strong_bull = len(df[df["MACD Market Pulse"] == "Strong Bullish"])
-        macd_weak_bull = len(df[df["MACD Market Pulse"] == "Weak Bullish"])
-        macd_strong_bear = len(df[df["MACD Market Pulse"] == "Strong Bearish"])
-        macd_cooling = len(df[df["MACD Market Pulse"] == "Bullish Cooling"])
+        macd_strong_bull = len(df[df["MACD Market Pulse"] == "Strong Bullish"]) if "MACD Market Pulse" in df else 0
+        macd_weak_bull = len(df[df["MACD Market Pulse"] == "Weak Bullish"]) if "MACD Market Pulse" in df else 0
+        macd_strong_bear = len(df[df["MACD Market Pulse"] == "Strong Bearish"]) if "MACD Market Pulse" in df else 0
+        macd_cooling = len(df[df["MACD Market Pulse"] == "Bullish Cooling"]) if "MACD Market Pulse" in df else 0
         
         for _, row in df.iterrows():
             conditions = [
-                "Bullish Confluence" in str(row["Confluence"]),
-                "High Vol Expansion" in str(row["Volume Shocker"]),
-                "Bullish" in str(row["MACD Normal Divergence"]),
-                "MACD Hook Up" in str(row["MACD Hook Up"])
+                "Bullish Confluence" in str(row.get("Confluence", "")),
+                "High Vol Expansion" in str(row.get("Volume Shocker", "")),
+                "Bullish" in str(row.get("MACD Normal Divergence", "")),
+                "MACD Hook Up" in str(row.get("MACD Hook Up", ""))
             ]
             if any(conditions) and len(top_picks_list) < 8:
                 reasons = []
@@ -679,7 +707,6 @@ def build_html_dashboard(grid_dfs, analytics_df, date_str):
         </div>
         """
 
-    # Build HTPL Dashboard Table Rows
     htpl_rows = ""
     if not analytics_df.empty:
         for _, row in analytics_df.iterrows():
@@ -737,7 +764,6 @@ def build_html_dashboard(grid_dfs, analytics_df, date_str):
             </div>
 
             <div style="padding: 20px;">
-                <!-- Section: HTPL Dashboard -->
                 <h2 style="font-size: 16px; color: #1e3a8a; text-transform: uppercase; margin-top: 0; margin-bottom: 12px; border-left: 4px solid #3b82f6; padding-left: 8px;">🎯 HTPL Dashboard (Buy / Sell Recommendations)</h2>
                 <table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 25px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
                     <thead>
@@ -754,7 +780,6 @@ def build_html_dashboard(grid_dfs, analytics_df, date_str):
                     </tbody>
                 </table>
 
-                <!-- Section: Top High Probability Picks -->
                 <h2 style="font-size: 16px; color: #1e3a8a; text-transform: uppercase; margin-bottom: 12px; border-left: 4px solid #1e3a8a; padding-left: 8px;">⭐ Top Picks / Technical Confluences</h2>
                 <table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 25px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
                     <thead>
@@ -770,7 +795,6 @@ def build_html_dashboard(grid_dfs, analytics_df, date_str):
                     </tbody>
                 </table>
 
-                <!-- Section: Multi-timeframe summaries -->
                 <h2 style="font-size: 16px; color: #1e3a8a; text-transform: uppercase; margin-bottom: 12px; border-left: 4px solid #1e3a8a; padding-left: 8px;">📈 Market Pulse Heatmaps</h2>
                 {tf_summary_html}
                 
@@ -856,11 +880,18 @@ def main():
         tf_divergences[tf_label] = divergences
         grid_dfs[tf_label] = df_grid
 
-    # Step B: Generate HTF vs LTF Analytics Dataframe
+    # Step B: Generate Dedicated MACD Divergence Excel File
+    macd_excel_path = generate_dedicated_macd_excel(tf_divergences, date_str)
+    if macd_excel_path:
+        generated_excel_files.append(macd_excel_path)
+
+    # Step C: Generate HTF vs LTF Analytics Dataframe
     analytics_df = generate_analytics_data(tf_divergences)
 
-    # Step C: Append HTF_LTF Analytics Sheet into generated Excel files
+    # Step D: Append HTF_LTF Analytics Sheet into generated timeframe Excel files
     for filepath in generated_excel_files:
+        if "MACD_Divergence_Report" in filepath:
+            continue
         try:
             with pd.ExcelWriter(filepath, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
                 if not analytics_df.empty:
@@ -873,14 +904,13 @@ def main():
         except Exception as e:
             logger.error(f"Could not append HTF_LTF_Analytics sheet to {filepath}: {e}")
 
-    # Step D: Build HTML Dashboard
+    # Step E: Build HTML Dashboard
     html_dashboard = build_html_dashboard(grid_dfs, analytics_df, date_str)
 
-    # Step E: Dispatch Alerts & Notifications
+    # Step F: Dispatch Alerts & Notifications
     email_subject = f"NSE Scanner Executive Report & HTPL Dashboard - {date_str}"
     send_email_with_attachments(email_subject, html_dashboard, generated_excel_files)
 
-    # Send summary alert to Telegram
     tg_summary = f"<b>NSE Market Scan Complete ({date_str})</b>\n\n"
     if not analytics_df.empty:
         tg_summary += f"<b>HTPL Alerts:</b> {len(analytics_df)} confluence signals found!\n"
